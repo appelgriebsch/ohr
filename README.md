@@ -238,15 +238,35 @@ Also in `demo/`:
 ohr --model-info    # full list
 ```
 
+## Performance
+
+Tested on Apple M2 with synthetic speech. Real-world performance may vary.
+
+| Audio Length | Transcribe Time | Speed |
+|-------------|-----------------|-------|
+| 5 seconds | 300ms | 8x real-time |
+| 30 seconds | 600ms | 39x real-time |
+| 1 minute | 1.5s | 46x real-time |
+| 3 minutes | 2.5s | 58x real-time |
+| 10 minutes | 4.7s | 57x real-time |
+
+10 minutes of audio transcribes in under 5 seconds. No upper limit found.
+
 ## Limitations
 
 | Constraint | Detail |
 |------------|--------|
 | Platform | macOS 26+, Apple Silicon only |
 | Model | One model (`apple-speechanalyzer`), not configurable |
-| Audio formats | 7 formats (see above). No OGG, OPUS, or WebM audio |
-| Accuracy | On-device model. Accuracy varies by language and audio quality |
-| Speed | On-device inference — a few seconds for short clips, longer for large files |
+| Accuracy | ~90-95% on clear synthetic speech. Lower on real speech with noise, accents, or multiple speakers |
+| Numbers | Spoken numbers sometimes confused with ordinals ("five second" → "52nd") |
+| Languages | 30 languages supported, but accuracy tested only for English. Other languages need the `-l` flag |
+| No diarization | Cannot distinguish between different speakers |
+| Audio formats | m4a, wav, mp3, mp4, caf, aiff, flac. No OGG, OPUS, or WebM |
+| apfel integration | When piping to apfel, transcripts longer than ~3000 words may exceed apfel's 4096-token context window |
+| Testing gap | All testing used synthetic `say` command speech, not real human recordings |
+
+See [docs/testing.md](docs/testing.md) for the full QA report with methodology and detailed results.
 
 ## CLI Reference
 
