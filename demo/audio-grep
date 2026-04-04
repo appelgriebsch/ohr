@@ -1,0 +1,125 @@
+#!/bin/bash
+# audio-grep — grep-like interface for audio files, outputs matching segments with timestamps
+#
+# Usage:  audio-grep "deadline" meeting.m4a
+#         audio-grep -c "budget" *.m4a              # count matches per file
+#         audio-grep -j "action item" recording.wav  # JSON output
+#
+# Like grep, but for spoken words. Returns exit code 0 if matches found, 1 if not.
+#
+# Requires: ohr installed
+
+COUNT_ONLY=false
+JSON_OUTPUT=false
+CASE_INSENSITIVE=false
+CONTEXT=0
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c|--count)        COUNT_ONLY=true; shift ;;
+        -j|--json)         JSON_OUTPUT=true; shift ;;
+        -i|--ignore-case)  CASE_INSENSITIVE=true; shift ;;
+        -C|--context)      CONTEXT="$2"; shift 2 ;;
+        -h|--help)
+            echo "audio-grep — search spoken content in audio files"
+            echo ""
+            echo "Usage: audio-grep [OPTIONS] <pattern> <file>..."
+            echo ""
+            echo "  -c, --count         Show match count per file"
+            echo "  -j, --json          JSON output with timestamps"
+            echo "  -i, --ignore-case   Case-insensitive matching"
+            echo "  -h, --help          Show this help"
+            echo ""
+            echo "Exit codes: 0 = matches found, 1 = no matches"
+            echo ""
+            echo "Examples:"
+            echo "  audio-grep \"deadline\" meeting.m4a"
+            echo "  audio-grep -c \"budget\" meetings/*.m4a"
+            echo "  audio-grep -j \"action item\" standup.wav"
+            echo "  audio-grep -i \"error\" support-calls/*.m4a"
+            echo ""
+            echo "Requires: ohr (speech-to-text)"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+PATTERN="${POSITIONAL[0]}"
+if [[ -z "$PATTERN" || ${#POSITIONAL[@]} -lt 2 ]]; then
+    echo "Usage: audio-grep <pattern> <file>..."
+    exit 2
+fi
+
+if ! command -v ohr &>/dev/null; then
+    echo "Error: ohr not found" >&2; exit 2
+fi
+
+GREP_FLAGS=""
+$CASE_INSENSITIVE && GREP_FLAGS="-i"
+
+TOTAL_MATCHES=0
+MULTI_FILE=$([[ ${#POSITIONAL[@]} -gt 2 ]] && echo true || echo false)
+
+for FILE in "${POSITIONAL[@]:1}"; do
+    if [[ ! -f "$FILE" ]]; then continue; fi
+
+    # Get JSON with segments and timestamps
+    data=$(ohr -o json "$FILE" 2>/dev/null)
+    if [[ $? -ne 0 ]]; then continue; fi
+
+    # Extract segments and search
+    segments=$(echo "$data" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for s in data.get('segments', []):
+    print(f\"{s['start']:.2f}|{s['end']:.2f}|{s['text']}\")
+" 2>/dev/null)
+
+    file_matches=0
+    match_lines=""
+
+    while IFS='|' read -r start end text; do
+        [[ -z "$text" ]] && continue
+        if echo "$text" | grep -q $GREP_FLAGS "$PATTERN"; then
+            file_matches=$((file_matches + 1))
+
+            # Format timestamp
+            start_h=$(printf "%02d" $((${start%.*} / 3600)))
+            start_m=$(printf "%02d" $(((${start%.*} % 3600) / 60)))
+            start_s=$(printf "%02d" $((${start%.*} % 60)))
+            ts="${start_h}:${start_m}:${start_s}"
+
+            if $JSON_OUTPUT; then
+                match_lines+=$(printf '{"file":"%s","start":%s,"end":%s,"text":"%s"}\n' \
+                    "$(basename "$FILE")" "$start" "$end" "$(echo "$text" | sed 's/"/\\"/g')")
+            else
+                prefix=""
+                $MULTI_FILE && prefix="\033[36m$(basename "$FILE")\033[0m:"
+                # Highlight match
+                if $CASE_INSENSITIVE; then
+                    highlighted=$(echo "$text" | sed -E "s/($PATTERN)/$(printf '\033[1;33m')\\1$(printf '\033[0m')/gi")
+                else
+                    highlighted=$(echo "$text" | sed -E "s/($PATTERN)/$(printf '\033[1;33m')\\1$(printf '\033[0m')/g")
+                fi
+                match_lines+=$(printf '%b\033[90m[%s]\033[0m %s\n' "$prefix" "$ts" "$highlighted")
+            fi
+        fi
+    done <<< "$segments"
+
+    TOTAL_MATCHES=$((TOTAL_MATCHES + file_matches))
+
+    if $COUNT_ONLY; then
+        if $MULTI_FILE; then
+            echo -e "\033[36m$(basename "$FILE")\033[0m:$file_matches"
+        else
+            echo "$file_matches"
+        fi
+    elif [[ -n "$match_lines" ]]; then
+        echo -e "$match_lines"
+    fi
+done
+
+[[ $TOTAL_MATCHES -gt 0 ]] && exit 0 || exit 1

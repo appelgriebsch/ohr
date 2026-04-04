@@ -1,0 +1,75 @@
+#!/bin/bash
+# dictate — speak and save to a text file using live microphone
+#
+# Usage:  dictate note.txt            # dictate until Ctrl+C, save to file
+#         dictate                      # dictate to stdout
+#         dictate -a journal.txt       # append to existing file
+#         dictate -l de-DE brief.txt   # dictate in German
+#
+# Requires: ohr installed
+
+APPEND=false
+LANGUAGE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -a|--append)   APPEND=true; shift ;;
+        -l|--language) LANGUAGE="$2"; shift 2 ;;
+        -h|--help)
+            echo "dictate — speak into a text file"
+            echo ""
+            echo "Usage: dictate [OPTIONS] [output-file]"
+            echo ""
+            echo "  -a, --append          Append to file instead of overwrite"
+            echo "  -l, --language <code>  Language code (e.g. en-US, de-DE)"
+            echo "  -h, --help             Show this help"
+            echo ""
+            echo "Speak naturally. Press Ctrl+C to stop and save."
+            echo ""
+            echo "Examples:"
+            echo "  dictate note.txt            # dictate, save to file"
+            echo "  dictate                      # dictate to stdout"
+            echo "  dictate -a journal.txt       # append to journal"
+            echo "  dictate -l de-DE brief.txt   # dictate in German"
+            echo ""
+            echo "Requires: ohr (speech-to-text)"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  OUTFILE="$1"; shift ;;
+    esac
+done
+
+
+if ! command -v ohr &>/dev/null; then
+    echo "Error: ohr not found. Install from https://github.com/Arthur-Ficial/ohr" >&2
+    exit 1
+fi
+
+LANG_FLAG=""
+[[ -n "$LANGUAGE" ]] && LANG_FLAG="-l $LANGUAGE"
+
+TMPFILE=$(mktemp /tmp/dictate-XXXXXX.txt)
+trap "rm -f $TMPFILE" EXIT
+
+echo -e "\033[36mDictating...\033[0m speak naturally. Press \033[1mCtrl+C\033[0m to stop." >&2
+
+# Capture microphone output, writing each segment to temp file
+ohr --listen -q $LANG_FLAG 2>/dev/null | while IFS= read -r line; do
+    # Strip timestamp prefix if present
+    text=$(echo "$line" | sed 's/^\[.*\] //')
+    echo "$text"
+    echo "$text" >> "$TMPFILE"
+done
+
+echo "" >&2
+
+if [[ -n "$OUTFILE" ]]; then
+    if $APPEND; then
+        cat "$TMPFILE" >> "$OUTFILE"
+        echo -e "\033[32m✓\033[0m appended to $OUTFILE" >&2
+    else
+        cp "$TMPFILE" "$OUTFILE"
+        echo -e "\033[32m✓\033[0m saved to $OUTFILE" >&2
+    fi
+fi

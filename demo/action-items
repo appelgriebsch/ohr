@@ -1,0 +1,75 @@
+#!/bin/bash
+# action-items — extract action items and to-dos from a meeting recording
+#
+# Usage:  action-items standup.m4a
+#         action-items meeting.m4a --format checklist
+#         action-items meeting.m4a -c              # copy to clipboard
+#
+# Requires: ohr + apfel installed
+
+FORMAT="plain"
+LANGUAGE=""
+COPY=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --format)      FORMAT="$2"; shift 2 ;;
+        -l|--language) LANGUAGE="$2"; shift 2 ;;
+        -c|--copy)     COPY=true; shift ;;
+        -h|--help)
+            echo "action-items — extract action items from meeting recordings"
+            echo ""
+            echo "Usage: action-items [OPTIONS] <audio-file>"
+            echo ""
+            echo "  --format <fmt>       plain (default) or checklist"
+            echo "  -l, --language <code> Language code"
+            echo "  -c, --copy           Copy to clipboard"
+            echo "  -h, --help           Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  action-items standup.m4a"
+            echo "  action-items meeting.m4a --format checklist"
+            echo "  action-items meeting.m4a -c | pbpaste  # paste into notes"
+            echo ""
+            echo "Requires: ohr + apfel"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  FILE="$1"; shift ;;
+    esac
+done
+
+if [[ -z "$FILE" ]]; then echo "Usage: action-items <audio-file>"; exit 1; fi
+if [[ ! -f "$FILE" ]]; then echo "Error: file not found: $FILE" >&2; exit 1; fi
+
+for cmd in ohr apfel; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "Error: $cmd not found" >&2; exit 1
+    fi
+done
+
+LANG_FLAG=""
+[[ -n "$LANGUAGE" ]] && LANG_FLAG="-l $LANGUAGE"
+
+echo -e "\033[90mTranscribing...\033[0m" >&2
+transcript=$(ohr $LANG_FLAG "$FILE" 2>/dev/null)
+if [[ $? -ne 0 ]]; then echo "Error: transcription failed" >&2; exit 1; fi
+
+if [[ "$FORMAT" == "checklist" ]]; then
+    SYSTEM="Extract action items, to-dos, and commitments from this meeting transcript. Output as a markdown checklist:
+- [ ] Action item (Owner, if mentioned)
+- [ ] Another action item
+
+Include only concrete, actionable items. If someone says they'll do something, that's an action item. If no action items found, say 'No action items found.' Output nothing else."
+else
+    SYSTEM="Extract action items, to-dos, and commitments from this meeting transcript. For each item, include who is responsible (if mentioned) and any deadline. Be concise. If no action items found, say 'No action items found.'"
+fi
+
+result=$(echo "$transcript" | apfel -q -s "$SYSTEM")
+
+if $COPY; then
+    echo "$result" | pbcopy
+    echo -e "\033[90m(copied to clipboard)\033[0m" >&2
+fi
+
+echo "$result"

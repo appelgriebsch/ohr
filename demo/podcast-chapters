@@ -1,0 +1,88 @@
+#!/bin/bash
+# podcast-chapters — generate timestamped chapter markers from audio
+#
+# Usage:  podcast-chapters episode.m4a
+#         podcast-chapters episode.m4a -o markdown
+#         podcast-chapters episode.m4a --save
+#
+# Requires: ohr + apfel installed
+
+FORMAT="plain"
+SAVE=false
+LANGUAGE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--output)   FORMAT="$2"; shift 2 ;;
+        -l|--language) LANGUAGE="$2"; shift 2 ;;
+        -s|--save)     SAVE=true; shift ;;
+        -h|--help)
+            echo "podcast-chapters — generate chapter markers from audio"
+            echo ""
+            echo "Usage: podcast-chapters [OPTIONS] <audio-file>"
+            echo ""
+            echo "  -o, --output <fmt>  plain (default) or markdown"
+            echo "  -l, --language <code>  Language code"
+            echo "  -s, --save          Save next to source file (.chapters.txt)"
+            echo "  -h, --help          Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  podcast-chapters episode.m4a"
+            echo "  podcast-chapters lecture.wav -o markdown"
+            echo "  podcast-chapters talk.m4a --save"
+            echo ""
+            echo "Requires: ohr + apfel"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  FILE="$1"; shift ;;
+    esac
+done
+
+if [[ -z "$FILE" ]]; then echo "Usage: podcast-chapters <audio-file>"; exit 1; fi
+if [[ ! -f "$FILE" ]]; then echo "Error: file not found: $FILE" >&2; exit 1; fi
+
+for cmd in ohr apfel; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "Error: $cmd not found" >&2; exit 1
+    fi
+done
+
+LANG_FLAG=""
+[[ -n "$LANGUAGE" ]] && LANG_FLAG="-l $LANGUAGE"
+
+echo -e "\033[90mTranscribing $(basename "$FILE")...\033[0m" >&2
+
+# Get verbose JSON with timestamps
+transcript=$(ohr -o json $LANG_FLAG "$FILE" 2>/dev/null)
+if [[ $? -ne 0 ]]; then echo "Error: transcription failed" >&2; exit 1; fi
+
+if [[ "$FORMAT" == "markdown" ]]; then
+    SYSTEM="You are a podcast chapter generator. Given a JSON transcript with timestamped segments, identify 3-8 topic changes and output chapter markers in this format:
+
+## Chapters
+
+- [00:00:00] Introduction
+- [00:02:15] Topic name
+- [00:05:30] Another topic
+
+Use the timestamps from the segments. Each chapter title should be 2-5 words. Be specific about the content."
+else
+    SYSTEM="You are a podcast chapter generator. Given a JSON transcript with timestamped segments, identify 3-8 topic changes and output chapter markers in this format:
+
+00:00:00 Introduction
+00:02:15 Topic name
+00:05:30 Another topic
+
+Use the timestamps from the segments. Each chapter title should be 2-5 words. Be specific. Output only the chapter list."
+fi
+
+result=$(echo "$transcript" | apfel -q -s "$SYSTEM")
+
+if $SAVE; then
+    outfile="${FILE%.*}.chapters.txt"
+    echo "$result" > "$outfile"
+    echo -e "\033[32m✓\033[0m saved: $outfile" >&2
+fi
+
+echo "$result"

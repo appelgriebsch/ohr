@@ -1,0 +1,72 @@
+#!/bin/bash
+# live-caption — real-time captions displayed in the terminal
+#
+# Usage:  live-caption                   # start captioning
+#         live-caption -l de-DE          # German captions
+#         live-caption --compact          # single-line mode (overwrites)
+#
+# Requires: ohr installed
+
+LANGUAGE=""
+COMPACT=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -l|--language) LANGUAGE="$2"; shift 2 ;;
+        --compact)     COMPACT=true; shift ;;
+        -h|--help)
+            echo "live-caption — real-time captions in the terminal"
+            echo ""
+            echo "Usage: live-caption [OPTIONS]"
+            echo ""
+            echo "  -l, --language <code>  Language code (e.g. en-US, de-DE)"
+            echo "  --compact              Single-line mode (overwrites previous)"
+            echo "  -h, --help             Show this help"
+            echo ""
+            echo "Press Ctrl+C to stop."
+            echo ""
+            echo "Examples:"
+            echo "  live-caption                    # English captions"
+            echo "  live-caption -l de-DE            # German"
+            echo "  live-caption --compact            # single-line overlay"
+            echo ""
+            echo "Requires: ohr (speech-to-text)"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  echo "Unknown argument: $1. Use --help."; exit 1 ;;
+    esac
+done
+
+if ! command -v ohr &>/dev/null; then
+    echo "Error: ohr not found" >&2; exit 1
+fi
+
+LANG_FLAG=""
+[[ -n "$LANGUAGE" ]] && LANG_FLAG="-l $LANGUAGE"
+
+echo -e "\033[36mlive-caption\033[0m listening... (Ctrl+C to stop)" >&2
+echo "" >&2
+
+if $COMPACT; then
+    # Single-line mode: overwrite the same line
+    ohr --listen -q $LANG_FLAG 2>/dev/null | while IFS= read -r line; do
+        # Strip timestamp if present
+        text=$(echo "$line" | sed 's/^\[.*\] //')
+        # Clear line and print
+        printf "\r\033[K\033[1m%s\033[0m" "$text"
+    done
+    echo ""
+else
+    # Multi-line mode: each segment on its own line with dimmed timestamp
+    ohr --listen -q --timestamps $LANG_FLAG 2>/dev/null | while IFS= read -r line; do
+        # Parse [timestamp] text
+        if [[ "$line" =~ ^\[([^\]]+)\]\ (.*) ]]; then
+            ts="${BASH_REMATCH[1]}"
+            text="${BASH_REMATCH[2]}"
+            echo -e "\033[90m$ts\033[0m $text"
+        else
+            echo "$line"
+        fi
+    done
+fi

@@ -1,0 +1,103 @@
+#!/bin/bash
+# voice-note — record a voice memo, transcribe it, and optionally summarize
+#
+# Usage:  voice-note                    # record + transcribe (Ctrl+C to stop)
+#         voice-note --duration 30      # record for 30 seconds
+#         voice-note --summarize        # record + transcribe + summarize with apfel
+#         voice-note -o note.txt        # save transcript to file
+#
+# Requires: ohr installed, apfel for --summarize
+
+DURATION=""
+SUMMARIZE=false
+OUTFILE=""
+LANGUAGE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d|--duration) DURATION="$2"; shift 2 ;;
+        -s|--summarize) SUMMARIZE=true; shift ;;
+        -o|--output)   OUTFILE="$2"; shift 2 ;;
+        -l|--language) LANGUAGE="$2"; shift 2 ;;
+        -h|--help)
+            echo "voice-note — record, transcribe, and optionally summarize"
+            echo ""
+            echo "Usage: voice-note [OPTIONS]"
+            echo ""
+            echo "  -d, --duration <sec>   Record for N seconds (default: until Ctrl+C)"
+            echo "  -s, --summarize        Summarize transcript with apfel"
+            echo "  -o, --output <file>    Save transcript to file"
+            echo "  -l, --language <code>  Language code"
+            echo "  -h, --help             Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  voice-note                        # record, transcribe"
+            echo "  voice-note -d 60 -s               # 60s recording, summarize"
+            echo "  voice-note -o idea.txt             # save to file"
+            echo ""
+            echo "Requires: ohr (+ apfel for --summarize)"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  echo "Unknown argument: $1. Use --help."; exit 1 ;;
+    esac
+done
+
+if ! command -v ohr &>/dev/null; then
+    echo "Error: ohr not found" >&2; exit 1
+fi
+
+if $SUMMARIZE && ! command -v apfel &>/dev/null; then
+    echo "Error: apfel not found (needed for --summarize)" >&2; exit 1
+fi
+
+# Record audio
+TMPFILE=$(mktemp /tmp/voice-note-XXXXXX.m4a)
+trap "rm -f $TMPFILE" EXIT
+
+if [[ -n "$DURATION" ]]; then
+    echo -e "\033[36mRecording for ${DURATION}s...\033[0m" >&2
+    # Use macOS built-in recording via afrecord (or sox if available)
+    if command -v sox &>/dev/null; then
+        sox -d -c 1 -r 16000 "$TMPFILE" trim 0 "$DURATION" 2>/dev/null
+    else
+        # Fallback: use AVFoundation via swift one-liner
+        timeout "$DURATION" say -o "$TMPFILE" "" 2>/dev/null &
+        # Actually use afrecord
+        afrecord -d "$DURATION" -f m4af -c 1 "$TMPFILE" 2>/dev/null || {
+            echo -e "\033[90mUsing ffmpeg for recording...\033[0m" >&2
+            ffmpeg -f avfoundation -i ":0" -t "$DURATION" -y "$TMPFILE" 2>/dev/null
+        }
+    fi
+else
+    echo -e "\033[36mRecording...\033[0m press \033[1mCtrl+C\033[0m to stop." >&2
+    ffmpeg -f avfoundation -i ":0" -y "$TMPFILE" 2>/dev/null
+fi
+
+echo -e "\033[90mTranscribing...\033[0m" >&2
+
+LANG_FLAG=""
+[[ -n "$LANGUAGE" ]] && LANG_FLAG="-l $LANGUAGE"
+
+transcript=$(ohr $LANG_FLAG "$TMPFILE" 2>/dev/null)
+status=$?
+
+if [[ $status -ne 0 ]]; then
+    echo "Error: transcription failed" >&2
+    exit $status
+fi
+
+echo ""
+echo -e "\033[1mTranscript:\033[0m"
+echo "$transcript"
+
+if [[ -n "$OUTFILE" ]]; then
+    echo "$transcript" > "$OUTFILE"
+    echo -e "\n\033[32m✓\033[0m saved to $OUTFILE" >&2
+fi
+
+if $SUMMARIZE; then
+    echo ""
+    echo -e "\033[1mSummary:\033[0m"
+    echo "$transcript" | apfel -q -s "Summarize this voice note in 2-3 sentences. Be concise."
+fi

@@ -1,0 +1,80 @@
+#!/bin/bash
+# subtitle — generate subtitles for video/audio files
+#
+# Usage:  subtitle video.mp4                    # SRT to stdout
+#         subtitle video.mp4 -o vtt             # VTT format
+#         subtitle lecture.m4a -l en-US          # English
+#         subtitle video.mp4 --save              # auto-save as video.srt
+#
+# Requires: ohr installed
+
+FORMAT="srt"
+LANGUAGE=""
+SAVE=false
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--output)   FORMAT="$2"; shift 2 ;;
+        -l|--language) LANGUAGE="$2"; shift 2 ;;
+        --save|-s)     SAVE=true; shift ;;
+        -h|--help)
+            echo "subtitle — generate subtitles for audio/video"
+            echo ""
+            echo "Usage: subtitle [OPTIONS] <media-file>"
+            echo ""
+            echo "  -o, --output <fmt>     srt (default) or vtt"
+            echo "  -l, --language <code>  Language code (e.g. en-US, de-DE)"
+            echo "  -s, --save             Auto-save next to source file"
+            echo "  -h, --help             Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  subtitle lecture.m4a                  # SRT to stdout"
+            echo "  subtitle video.mp4 --save             # saves video.srt"
+            echo "  subtitle talk.wav -o vtt --save        # saves talk.vtt"
+            echo "  subtitle interview.m4a -l fr-FR        # French"
+            echo ""
+            echo "Requires: ohr (speech-to-text)"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  FILES+=("$1"); shift ;;
+    esac
+done
+
+FILE="${FILES[0]}"
+if [[ -z "$FILE" ]]; then
+    echo "Usage: subtitle <media-file>"
+    exit 1
+fi
+
+if [[ ! -f "$FILE" ]]; then
+    echo "Error: file not found: $FILE" >&2
+    exit 1
+fi
+
+if ! command -v ohr &>/dev/null; then
+    echo "Error: ohr not found. Install from https://github.com/Arthur-Ficial/ohr" >&2
+    exit 1
+fi
+
+LANG_FLAG=""
+[[ -n "$LANGUAGE" ]] && LANG_FLAG="-l $LANGUAGE"
+
+if $SAVE; then
+    base="${FILE%.*}"
+    outfile="${base}.${FORMAT}"
+    echo -e "\033[90mGenerating ${FORMAT} subtitles for $(basename "$FILE")...\033[0m" >&2
+    ohr -o "$FORMAT" $LANG_FLAG "$FILE" > "$outfile" 2>/dev/null
+    status=$?
+    if [[ $status -eq 0 ]]; then
+        lines=$(wc -l < "$outfile" | tr -d ' ')
+        echo -e "\033[32m✓\033[0m saved: $outfile ($lines lines)" >&2
+    else
+        echo "Error: transcription failed (exit $status)" >&2
+        rm -f "$outfile"
+        exit $status
+    fi
+else
+    ohr -o "$FORMAT" $LANG_FLAG "$FILE"
+fi

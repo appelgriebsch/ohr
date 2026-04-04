@@ -1,0 +1,112 @@
+#!/bin/bash
+# whisper-compat — drop-in replacement for OpenAI Whisper CLI
+#
+# Usage:  whisper-compat audio.m4a                      # same as: whisper audio.m4a
+#         whisper-compat audio.wav --output_format srt
+#         whisper-compat audio.mp3 --language de --output_format vtt
+#
+# Accepts common Whisper CLI flags and translates to ohr equivalents.
+# Use this as a bridge when migrating from Whisper to ohr.
+#
+# Requires: ohr installed
+
+OUTPUT_FORMAT=""
+LANGUAGE=""
+OUTPUT_DIR="."
+FILES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        # Whisper flags we support
+        --output_format|--output-format) OUTPUT_FORMAT="$2"; shift 2 ;;
+        --language)                      LANGUAGE="$2"; shift 2 ;;
+        --output_dir|--output-dir)       OUTPUT_DIR="$2"; shift 2 ;;
+        --model)                         shift 2 ;; # ignored (one model)
+        --device)                        shift 2 ;; # ignored (always on-device)
+        --task)                          shift 2 ;; # ignored (always transcribe)
+        --fp16)                          shift ;;    # ignored
+        --verbose)                       shift ;;    # ignored
+        # Whisper flags we warn about
+        --initial_prompt|--initial-prompt)
+            echo -e "\033[33mwarning:\033[0m --initial_prompt not supported by SpeechAnalyzer, ignored" >&2
+            shift 2 ;;
+        --word_timestamps|--word-timestamps)
+            echo -e "\033[33mwarning:\033[0m --word_timestamps not supported, using segment timestamps" >&2
+            shift ;;
+        -h|--help)
+            echo "whisper-compat — Whisper CLI compatibility wrapper for ohr"
+            echo ""
+            echo "Usage: whisper-compat [OPTIONS] <audio-file>..."
+            echo ""
+            echo "Supported Whisper flags:"
+            echo "  --output_format <fmt>  txt, srt, vtt, json, verbose_json"
+            echo "  --language <code>      Language code (e.g. en, de, fr)"
+            echo "  --output_dir <dir>     Output directory (default: .)"
+            echo "  --model <name>         Ignored (uses apple-speechanalyzer)"
+            echo ""
+            echo "Unsupported flags are silently ignored or warned about."
+            echo ""
+            echo "Examples:"
+            echo "  whisper-compat meeting.m4a"
+            echo "  whisper-compat lecture.wav --output_format srt"
+            echo "  whisper-compat *.m4a --language de --output_dir transcripts/"
+            echo ""
+            echo "Requires: ohr (speech-to-text)"
+            exit 0
+            ;;
+        -*) echo -e "\033[33mwarning:\033[0m unknown flag $1, ignored" >&2; shift ;;
+        *)  FILES+=("$1"); shift ;;
+    esac
+done
+
+if [[ ${#FILES[@]} -eq 0 ]]; then
+    echo "Usage: whisper-compat <audio-file>..."
+    exit 1
+fi
+
+if ! command -v ohr &>/dev/null; then
+    echo "Error: ohr not found. Install: brew install Arthur-Ficial/tap/ohr" >&2
+    exit 1
+fi
+
+# Map Whisper output format to ohr format
+OHR_FORMAT="plain"
+OUT_EXT="txt"
+case "$OUTPUT_FORMAT" in
+    txt|"")       OHR_FORMAT="plain"; OUT_EXT="txt" ;;
+    srt)          OHR_FORMAT="srt"; OUT_EXT="srt" ;;
+    vtt)          OHR_FORMAT="vtt"; OUT_EXT="vtt" ;;
+    json)         OHR_FORMAT="json"; OUT_EXT="json" ;;
+    verbose_json) OHR_FORMAT="json"; OUT_EXT="json" ;; # ohr json includes segments
+    tsv)
+        echo -e "\033[33mwarning:\033[0m TSV format not supported, using plain text" >&2
+        OHR_FORMAT="plain"; OUT_EXT="txt" ;;
+    *)
+        echo "Unknown format: $OUTPUT_FORMAT" >&2
+        exit 1 ;;
+esac
+
+LANG_FLAG=""
+[[ -n "$LANGUAGE" ]] && LANG_FLAG="-l $LANGUAGE"
+
+mkdir -p "$OUTPUT_DIR" 2>/dev/null
+
+for FILE in "${FILES[@]}"; do
+    if [[ ! -f "$FILE" ]]; then
+        echo "Error: $FILE not found" >&2
+        continue
+    fi
+
+    base=$(basename "${FILE%.*}")
+    outfile="$OUTPUT_DIR/${base}.${OUT_EXT}"
+
+    echo -e "\033[90mTranscribing $(basename "$FILE")...\033[0m" >&2
+    ohr -o "$OHR_FORMAT" $LANG_FLAG "$FILE" > "$outfile" 2>/dev/null
+
+    if [[ $? -eq 0 ]]; then
+        echo -e "\033[32m✓\033[0m $outfile"
+    else
+        echo -e "\033[31m✗\033[0m $(basename "$FILE") (failed)" >&2
+        rm -f "$outfile"
+    fi
+done

@@ -1,0 +1,70 @@
+#!/bin/bash
+# translate-audio — transcribe audio then translate with apfel
+#
+# Usage:  translate-audio recording.m4a              # auto-detect → English
+#         translate-audio recording.m4a --to German
+#         translate-audio recording.m4a --from de-DE --to English
+#
+# Requires: ohr + apfel installed
+
+FROM_LANG=""
+TO_LANG="English"
+COPY=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --from)   FROM_LANG="$2"; shift 2 ;;
+        --to)     TO_LANG="$2"; shift 2 ;;
+        -c|--copy) COPY=true; shift ;;
+        -h|--help)
+            echo "translate-audio — transcribe and translate audio"
+            echo ""
+            echo "Usage: translate-audio [OPTIONS] <audio-file>"
+            echo ""
+            echo "  --from <lang-code>  Source language for transcription (auto-detect if omitted)"
+            echo "  --to <language>     Target language name (default: English)"
+            echo "  -c, --copy          Copy translation to clipboard"
+            echo "  -h, --help          Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  translate-audio meeting.m4a                    # → English"
+            echo "  translate-audio interview.m4a --to German"
+            echo "  translate-audio speech.wav --from ja-JP --to English"
+            echo ""
+            echo "Requires: ohr (speech-to-text) + apfel (translation)"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  FILE="$1"; shift ;;
+    esac
+done
+
+if [[ -z "$FILE" ]]; then echo "Usage: translate-audio <audio-file>"; exit 1; fi
+if [[ ! -f "$FILE" ]]; then echo "Error: file not found: $FILE" >&2; exit 1; fi
+
+for cmd in ohr apfel; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "Error: $cmd not found" >&2; exit 1
+    fi
+done
+
+LANG_FLAG=""
+[[ -n "$FROM_LANG" ]] && LANG_FLAG="-l $FROM_LANG"
+
+echo -e "\033[90mTranscribing...\033[0m" >&2
+transcript=$(ohr $LANG_FLAG "$FILE" 2>/dev/null)
+if [[ $? -ne 0 ]]; then echo "Error: transcription failed" >&2; exit 1; fi
+
+echo -e "\033[90mTranslating to $TO_LANG...\033[0m" >&2
+result=$(echo "$transcript" | apfel -q -s "Translate the following text to $TO_LANG. Output only the translation, nothing else.")
+
+echo -e "\033[1mOriginal:\033[0m"
+echo "$transcript"
+echo ""
+echo -e "\033[1mTranslation ($TO_LANG):\033[0m"
+echo "$result"
+
+if $COPY; then
+    echo "$result" | pbcopy
+    echo -e "\n\033[90m(translation copied)\033[0m" >&2
+fi

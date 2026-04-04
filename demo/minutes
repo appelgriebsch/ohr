@@ -1,0 +1,81 @@
+#!/bin/bash
+# minutes — transcribe a meeting recording and generate minutes with apfel
+#
+# Usage:  minutes meeting.m4a
+#         minutes meeting.m4a -o markdown > minutes.md
+#         minutes -l de-DE meeting.m4a   # German meeting
+#
+# Requires: ohr + apfel installed
+
+FORMAT="plain"
+LANGUAGE=""
+COPY=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--output)  FORMAT="$2"; shift 2 ;;
+        -l|--language) LANGUAGE="-l $2"; shift 2 ;;
+        -c|--copy)    COPY=true; shift ;;
+        -h|--help)
+            echo "minutes — meeting recording to meeting minutes"
+            echo ""
+            echo "Usage: minutes [OPTIONS] <audio-file>"
+            echo ""
+            echo "  -o, --output <fmt>  Output format: plain (default), markdown"
+            echo "  -l, --language <code>  Language code (e.g. de-DE)"
+            echo "  -c, --copy           Copy to clipboard"
+            echo "  -h, --help           Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  minutes meeting.m4a"
+            echo "  minutes meeting.m4a -o markdown > minutes.md"
+            echo "  minutes -l de-DE standup.m4a"
+            echo ""
+            echo "Requires: ohr (speech-to-text) + apfel (LLM)"
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1. Use --help."; exit 1 ;;
+        *)  FILE="$1"; shift ;;
+    esac
+done
+
+if [[ -z "$FILE" ]]; then
+    echo "Usage: minutes <audio-file>"
+    exit 1
+fi
+
+if [[ ! -f "$FILE" ]]; then
+    echo "Error: file not found: $FILE" >&2
+    exit 1
+fi
+
+for cmd in ohr apfel; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "Error: $cmd not found. Install from https://github.com/Arthur-Ficial/$cmd" >&2
+        exit 1
+    fi
+done
+
+echo -e "\033[90mTranscribing $(basename "$FILE")...\033[0m" >&2
+
+transcript=$(ohr $LANGUAGE "$FILE" 2>/dev/null)
+status=$?
+if [[ $status -ne 0 ]]; then
+    echo "Error: transcription failed (exit $status)" >&2
+    exit $status
+fi
+
+if [[ "$FORMAT" == "markdown" ]]; then
+    SYSTEM="You are a meeting minutes writer. Given a raw transcript, produce structured meeting minutes in markdown format with: ## Summary (2-3 sentences), ## Key Points (bullet list), ## Action Items (bullet list with owners if mentioned), ## Decisions (if any). Be concise and factual."
+else
+    SYSTEM="You are a meeting minutes writer. Given a raw transcript, produce a concise summary: first 2-3 sentences overview, then key points and action items. Be factual, no fluff."
+fi
+
+result=$(echo "$transcript" | apfel -q -s "$SYSTEM")
+
+if $COPY; then
+    echo "$result" | pbcopy
+    echo -e "\033[90m(copied to clipboard)\033[0m" >&2
+fi
+
+echo "$result"
